@@ -16,29 +16,33 @@ WINDOW * wnd;
 // при этом перенос строки сохраняется
 int mygetstr(char * str, int n){
     int c;
-    char f = 0;
     for (int i = 0; i < n; ++i) {
         c = getch();
         switch (c)
         {
         case '\n':
-            if (ungetch('\n') != OK) return -1;
+            if (ungetch('\n') == ERR) return -1;
             str[i] = 0;
-            return ++i;
+            return i;
         case ' ':
-            if (f) {
-                str[i] = 0;
-                return ++i;
+            if (i == 0) {
+                --i;
+                break;
             }
-            else break;
+            else {
+                str[i] = 0;
+                return i;
+            }
+        case '\b':
+            i -= 2;
         case -1:
             return -1;
         default:
             str[i] = c;
-            f = 1;
             break;
         }
     }
+    str[n] = 0;
     return n + 1;
 }
 
@@ -51,39 +55,41 @@ void check_mem(void * ptr){
     }
 }
 
+// ls | grep CMake
+
 int main()
 {
     wnd = initscr();
-    scrollok(wnd, true);
+    scrollok(wnd, true); // для пролистывания (не работает)
     init_pair(1, COLOR_BLACK, COLOR_GREEN); // скорее всего не работает (видимо цвет меняется только в настройках окна)
     keypad(wnd, true);  // нужно для включения особых  клавиш (надо самостоятельно запрограммировать поведение)
     char cwd[PATH_MAX];
-    int y = 0, x = 0;
+    int y = 0, c = 0;
     while (true) {
         move(y, 0);
-        attrset(A_BOLD | COLOR_PAIR(1));
+        attrset(A_BOLD);
         printw(getcwd(cwd, PATH_MAX));
         printw("$ ");
         attroff(A_BOLD);
         ++y;
         refresh();
         char ** argv = NULL;
-        int i = 0, j = 1;
-        int n = 0, len;
+        int curr_arg_num = 0;
+        int mem_slots = 0, len;
         char * cur_str;
-        // цикл для получения с клавиатуры
-        // комманды (программы) и её параметров
+        c = ' ';
+        // цикл для получения с клавиатуры комманды/программы и её параметров
         do {
-            if (i == n) {
-                n += D_ARG;
-                argv = (char **)realloc(argv, n);
+            if (c != ' ') ungetch(c);
+            if (curr_arg_num == mem_slots) {
+                mem_slots += D_ARG;
+                argv = (char **)realloc(argv, mem_slots);
                 check_mem((void *)argv);
             }
             cur_str = NULL;
             len = 1;
             int check;
             do {
-                ++j;
                 len += D_STR;
                 cur_str = (char *)realloc(cur_str, len);
                 check_mem((void *)cur_str);
@@ -93,38 +99,39 @@ int main()
                     return 0;
                 }
             } while (check > D_STR);
-            argv[i] = cur_str;
-            ++i;
-        } while (getch() != '\n');
-        if (i == n) {
-            ++n;
-            argv = (char **)realloc(argv, n);
+            argv[curr_arg_num] = cur_str;
+            ++curr_arg_num;
+        } while ((c = getch()) != '\n');
+        if (curr_arg_num == mem_slots) {
+            ++mem_slots;
+            argv = (char **)realloc(argv, mem_slots);
             check_mem((void *)argv);
         }
-        argv[i] = NULL;
-        // разделение терминала
-        // на две программы
+        argv[curr_arg_num] = NULL;
+        // разделение терминала на две программы
         int id = fork(), err;
         switch (id)
         {
         case -1:
             putp("Critical error!!!\n");
             return 0;
-        case 0: // запуск программы/комманды с аттрибутами
-                // (проблемный код, в нём есть ошибки)
-            err = execvp(*argv, argv + 1);
-            wrefresh(wnd);
+        case 0: // запуск программы/комманды с аттрибутами (проблемный код, в нём есть ошибки)
+            err = execvp(*argv, argv);
+            refresh();
             if (err == -1) {
                 move(y, 0);
-                wprintw(wnd, "Something is going wrong!!!\r");
+                printw("Something is going wrong!!!\r");
                 refresh();
             }
-            wrefresh(wnd);
+            refresh();
             return 0;
         default:
             usleep(500); // костыль для приостановки основной программы, чтобы потомок успел вывести сообение об ошибке
             break;
         }
+        // очистка памяти
+        for (int i = 0; i < curr_arg_num; ++i) free(argv[i]);
+        free(argv);
     }
     endwin();
     return 0;
