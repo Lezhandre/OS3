@@ -6,22 +6,24 @@
 #include <ncurses.h>
 #include <unistd.h>
 #include <malloc.h>
+#include <sys/wait.h>
 
 #define D_STR 80    // изменение выделения памяти под строку
 #define D_ARG 5     // изменение выделения памяти под указатели
 
 WINDOW * wnd;
+int child_id;
 
 // функция для считывания строки без пробелов и переносов
 // при этом перенос строки сохраняется
-int mygetstr(char * str, int n){
+int mygetstr(char * str, int k, int n){
     int c;
-    for (int i = 0; i < n; ++i) {
+    for (int i = k; i < n; ++i) {
         c = getch();
         switch (c)
         {
-        case '\n':
-            if (ungetch('\n') == ERR) return -1;
+        case '\r':
+            if (ungetch('\r') == ERR) return -1;
             str[i] = 0;
             return i;
         case ' ':
@@ -31,10 +33,21 @@ int mygetstr(char * str, int n){
             }
             else {
                 str[i] = 0;
+                if (ungetch(' ') == ERR) return -1;
                 return i;
             }
-        case '\b':
-            i -= 2;
+        case KEY_BACKSPACE:
+            if (i > 0) {
+                if (delch() == TRUE) return -1;
+                i -= 2;
+            }
+            else {
+                int x, y;
+                getyx(wnd, y, x);
+                move(y, x + 1);
+                --i;
+            }
+            break;
         case -1:
             return -1;
         default:
@@ -55,19 +68,25 @@ void check_mem(void * ptr){
     }
 }
 
-// ls | grep CMake
+void kill_child(int sig){
+    int err = kill(child_id, sig); // посылание какого-то сигнала в дочерний процесс
+    if (err > 0)
+        putp("Child process died\r");
+    (void) signal(SIGINT, SIG_IGN);
+}
 
-int main()
-{
+int main(){
     wnd = initscr();
+    nonl();
     scrollok(wnd, true); // для пролистывания (не работает)
     init_pair(1, COLOR_BLACK, COLOR_GREEN); // скорее всего не работает (видимо цвет меняется только в настройках окна)
-    keypad(wnd, true);  // нужно для включения особых  клавиш (надо самостоятельно запрограммировать поведение)
+    keypad(wnd, true);  // нужно для включения особых клавиш (надо самостоятельно запрограммировать поведение)
     char cwd[PATH_MAX];
-    int y = 0, c = 0;
+    int y = 0;
     while (true) {
-        move(y, 0);
+        //move(y, 0);
         attrset(A_BOLD);
+        //printw("\r");
         printw(getcwd(cwd, PATH_MAX));
         printw("$ ");
         attroff(A_BOLD);
@@ -77,10 +96,8 @@ int main()
         int curr_arg_num = 0;
         int mem_slots = 0, len;
         char * cur_str;
-        c = ' ';
         // цикл для получения с клавиатуры комманды/программы и её параметров
         do {
-            if (c != ' ') ungetch(c);
             if (curr_arg_num == mem_slots) {
                 mem_slots += D_ARG;
                 argv = (char **)realloc(argv, mem_slots);
@@ -93,7 +110,7 @@ int main()
                 len += D_STR;
                 cur_str = (char *)realloc(cur_str, len);
                 check_mem((void *)cur_str);
-                if ((check = mygetstr(cur_str + len - D_STR - 1, D_STR)) == -1) {
+                if ((check = mygetstr(cur_str, len - D_STR - 1, D_STR)) == -1) {
                     putp("Scan-error\n");
                     endwin();
                     return 0;
@@ -101,33 +118,62 @@ int main()
             } while (check > D_STR);
             argv[curr_arg_num] = cur_str;
             ++curr_arg_num;
-        } while ((c = getch()) != '\n');
+        } while (getch() != '\r');
+        putp("\r");
+        refresh();
+        putp("\n");
+        refresh();
         if (curr_arg_num == mem_slots) {
             ++mem_slots;
             argv = (char **)realloc(argv, mem_slots);
             check_mem((void *)argv);
         }
         argv[curr_arg_num] = NULL;
-        // разделение терминала на две программы
-        int id = fork(), err;
-        switch (id)
-        {
-        case -1:
-            putp("Critical error!!!\n");
-            return 0;
-        case 0: // запуск программы/комманды с аттрибутами (проблемный код, в нём есть ошибки)
-            err = execvp(*argv, argv);
-            refresh();
+        if (curr_arg_num == 1 && strcmp(argv[0], "exit") == 0) {
+            for (int i = 0; i < curr_arg_num; ++i) free(argv[i]);
+            free(argv);
+            break;
+        }
+        else if (curr_arg_num == 2 && strcmp(argv[0], "cd") == 0) {
+            int err = chdir(argv[1]);
             if (err == -1) {
-                move(y, 0);
-                printw("Something is going wrong!!!\r");
+                //move(y, 0);
+                refresh();
+                perror("Can't go to this directory: ");
+                printw("\r\n");
                 refresh();
             }
-            refresh();
-            return 0;
-        default:
-            usleep(500); // костыль для приостановки основной программы, чтобы потомок успел вывести сообение об ошибке
-            break;
+        }
+        else { // разделение терминала на две программы
+            child_id = fork();
+            int err;
+            switch (child_id)
+            {
+            case -1:
+                printw("Critical error!!!\r");
+                return 0;
+            case 0: // дочерний процесс
+                //move(y, 0);
+                refresh();
+                err = execvp(*argv, argv);
+                if (err == -1) {
+                    printw("Something is going wrong!!!\r");
+                    printw("\n");
+                    ++y;
+                    refresh();
+                }
+                return 0;
+            default: // процесс-родитель
+                { // field of view
+                int* stat_loc = (int*)malloc(sizeof(int));
+                (void) signal(SIGINT, kill_child);
+                wait(stat_loc);
+                free(stat_loc);
+                break;
+                }
+            }
+            //move(y, 0);
+            //refresh();
         }
         // очистка памяти
         for (int i = 0; i < curr_arg_num; ++i) free(argv[i]);
