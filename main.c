@@ -1,6 +1,7 @@
 #include <string.h>
 #include <limits.h>
 #include <stdlib.h>
+#include <errno.h>
 
 #include <linux/limits.h>
 #include <ncurses.h>
@@ -84,7 +85,7 @@ int main(){
     char cwd[PATH_MAX];
     int y = 0;
     while (true) {
-        //move(y, 0);
+        move(y, 0);
         attrset(A_BOLD);
         //printw("\r");
         printw(getcwd(cwd, PATH_MAX));
@@ -137,43 +138,57 @@ int main(){
         else if (curr_arg_num == 2 && strcmp(argv[0], "cd") == 0) {
             int err = chdir(argv[1]);
             if (err == -1) {
-                //move(y, 0);
+                printw("Can't go to this  directory: ");
+                printw(strerror(errno));
                 refresh();
-                perror("Can't go to this directory: ");
-                printw("\r\n");
-                refresh();
+                y = getcury(wnd) + 2;
             }
         }
         else { // разделение терминала на две программы
+            int file_desc[2];
+            if(pipe(file_desc) == -1){
+                printw("Pipe failure\n");
+                refresh();
+                return 0;
+            }
             child_id = fork();
-            int err;
             switch (child_id)
             {
             case -1:
                 printw("Critical error!!!\r");
+                refresh();
                 return 0;
             case 0: // дочерний процесс
-                //move(y, 0);
-                refresh();
-                err = execvp(*argv, argv);
-                if (err == -1) {
-                    printw("Something is going wrong!!!\r");
-                    printw("\n");
-                    ++y;
-                    refresh();
-                }
-                return 0;
+                close(file_desc[0]);
+                dup2(file_desc[1], STDOUT_FILENO);
+                dup2(file_desc[1], STDERR_FILENO);
+                return execvp(*argv, argv);
             default: // процесс-родитель
                 { // field of view
-                int* stat_loc = (int*)malloc(sizeof(int));
+                close(file_desc[1]);
                 (void) signal(SIGINT, kill_child);
-                wait(stat_loc);
-                free(stat_loc);
-                break;
+                wait(NULL);
+                char buf[BUFSIZ];
+                int len;
+                while ((len = read(file_desc[0], buf, BUFSIZ)) > 0)
+                    printw("%*s", len, buf);
+                if (len < 0) {
+                    printw("Reading problem!!!");
+                    refresh();
+                    return 0;
+                }
+                refresh();
+                int tmp_y = getcury(wnd);
+                if (tmp_y > y)
+                    y = tmp_y;
+                else if (tmp_y == y)
+                    ++y;
+                else {
+                    printw("Could not find command!");
+                    y += 1;
+                }
                 }
             }
-            //move(y, 0);
-            //refresh();
         }
         // очистка памяти
         for (int i = 0; i < curr_arg_num; ++i) free(argv[i]);
