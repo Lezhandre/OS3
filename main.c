@@ -8,35 +8,30 @@
 #include <unistd.h>
 #include <malloc.h>
 #include <sys/wait.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 #define D_STR 80    // изменение выделения памяти под строку
 #define D_ARG 5     // изменение выделения памяти под указатели
 
 WINDOW * wnd;
 int child_id;
+int bash_hist_desc;
 
 // функция для считывания строки без пробелов и переносов
 // при этом перенос строки сохраняется
-int mygetstr(char * str, int k, int n){
-    int c;
-    for (int i = k; i < n; ++i) {
+int mygetstr(char * str, int * len, int n){
+    chtype c;
+    bool change;
+    for (int i = *len - (D_STR + 1); i < *len; ++i) {
         c = getch();
         switch (c)
         {
-        case '\r':
-            if (ungetch('\r') == ERR) return -1;
+        case '\n':
+            if (ungetch('\n') == ERR) return -1;
             str[i] = 0;
             return i;
-        case ' ':
-            if (i == 0) {
-                --i;
-                break;
-            }
-            else {
-                str[i] = 0;
-                if (ungetch(' ') == ERR) return -1;
-                return i;
-            }
         case KEY_BACKSPACE:
             if (i > 0) {
                 if (delch() == TRUE) return -1;
@@ -51,6 +46,45 @@ int mygetstr(char * str, int k, int n){
             break;
         case -1:
             return -1;
+        case KEY_UP:
+            {
+            char cwd[PATH_MAX];
+            char minibuf[1];
+            ssize_t read_num, i = 0;
+            lseek(bash_hist_desc, SEEK_CUR, +1);
+            while (lseek(bash_hist_desc, SEEK_CUR, -2) >= 0) {
+                read_num = read(bash_hist_desc, minibuf, 1);
+                ++i;
+                if (minibuf[0] != '\n') break;
+            }
+            if (i > 0) { //if smth was actually read
+                if (winsdelln(stdscr, 0) == ERR) return -1;
+                str = (char *)realloc(str, i + 1);
+                pread(bash_hist_desc, str, i, SEEK_CUR);
+                *len = i;
+                printw("%s$ %s", getcwd(cwd, PATH_MAX), str);
+            }
+            }
+            i = *len;
+            break;
+        case KEY_DOWN:
+            {
+            char minibuf[1];
+            size_t i = 0, read_num;
+            if (read_num = read(bash_hist_desc, minibuf, 1) && minibuf[0] != '\n') {
+                ++i;
+                while ((read_num = read(bash_hist_desc, minibuf, 1)) > 0 && minibuf[0] != '\n')
+                    ++i;
+                char cwd[PATH_MAX];
+                if (winsdelln(stdscr, 0) == ERR) return -1;
+                str = (char *)realloc(str, i + 1);
+                pread(bash_hist_desc, str, i, -i);
+                *len = i;
+                printw("%s$ %s", getcwd(cwd, PATH_MAX), str);
+            }
+            }
+            i = *len;
+            break;
         default:
             str[i] = c;
             break;
@@ -78,32 +112,27 @@ void kill_child(int sig){
 
 int main(){
     wnd = initscr();
-    nonl();
-    scrollok(wnd, true); // для пролистывания (не работает)
+    scrollok(wnd, true); // для ультрамегасупердуперпролистывания (чтобы вывод ещё больше не портился)
     init_pair(1, COLOR_BLACK, COLOR_GREEN); // скорее всего не работает (видимо цвет меняется только в настройках окна)
     keypad(wnd, true);  // нужно для включения особых клавиш (надо самостоятельно запрограммировать поведение)
-    char cwd[PATH_MAX];
+    char cwd[PATH_MAX], minibuf[1], buf[BUFSIZ];
     int y = 0;
+    bash_hist_desc = open("~/.bash_history", O_RDWR | O_APPEND);
     while (true) {
+        buf[0] = 0;
         move(y, 0);
         attrset(A_BOLD);
-        //printw("\r");
         printw(getcwd(cwd, PATH_MAX));
         printw("$ ");
         attroff(A_BOLD);
         ++y;
         refresh();
         char ** argv = NULL;
-        int curr_arg_num = 0;
-        int mem_slots = 0, len;
+        int cur_arg_num;
+        int len;
         char * cur_str;
         // цикл для получения с клавиатуры комманды/программы и её параметров
         do {
-            if (curr_arg_num == mem_slots) {
-                mem_slots += D_ARG;
-                argv = (char **)realloc(argv, mem_slots);
-                check_mem((void *)argv);
-            }
             cur_str = NULL;
             len = 1;
             int check;
@@ -111,43 +140,92 @@ int main(){
                 len += D_STR;
                 cur_str = (char *)realloc(cur_str, len);
                 check_mem((void *)cur_str);
-                if ((check = mygetstr(cur_str, len - D_STR - 1, D_STR)) == -1) {
+                if ((check = mygetstr(cur_str, &len, D_STR)) == -1) {
                     putp("Scan-error\n");
                     endwin();
                     return 0;
                 }
             } while (check > D_STR);
-            argv[curr_arg_num] = cur_str;
-            ++curr_arg_num;
-        } while (getch() != '\r');
+        } while (getch() != '\n');
+        char delim[] = " ";
+        size_t i = 0;
+        argv = (char**)malloc(D_ARG * sizeof(char *));
+        check_mem((void *)argv);
+        cur_arg_num = D_ARG;
+        argv[i] = strtok(cur_str, delim);
+        while (argv[i] != NULL) {
+            ++i;
+            if (i == cur_arg_num) {
+                cur_arg_num += D_ARG;
+                argv = (char **)realloc(argv, cur_arg_num * sizeof(char *));
+                check_mem((void *)argv);
+            }
+            argv[i] = strtok(NULL, delim);
+        }
+        cur_arg_num = i;
+        lseek(bash_hist_desc, SEEK_SET, 0);
+        bool new = true, same = true;
+        while (read(bash_hist_desc, minibuf, 1) > 0) {
+            if (strcmp(minibuf, " ") == 0) {
+                if (argv[i] == NULL) continue;
+                if (strcmp(argv[i], buf) != 0) same = false;
+                else ++i;
+            } 
+            else if (strcmp(minibuf, "\n") == 0) {
+                if (same) {
+                    new = false;
+                    break;
+                }
+                buf[0] = 0;
+                i = 0;
+            }
+            else {
+                if (argv[i] == NULL) continue;
+                strcat(buf, minibuf);
+            }
+        }
+        if (new) {
+            lseek(bash_hist_desc, SEEK_END, 0);
+            for (size_t i = 0; argv[i]; ++i) {
+                write(bash_hist_desc, argv[i], strlen(argv[i]));
+                write(bash_hist_desc, " ", 1);
+            }
+            write(bash_hist_desc, "\n", 1);
+        }
         putp("\r");
         refresh();
         putp("\n");
         refresh();
-        if (curr_arg_num == mem_slots) {
-            ++mem_slots;
-            argv = (char **)realloc(argv, mem_slots);
-            check_mem((void *)argv);
-        }
-        argv[curr_arg_num] = NULL;
-        if (curr_arg_num == 1 && strcmp(argv[0], "exit") == 0) {
-            for (int i = 0; i < curr_arg_num; ++i) free(argv[i]);
-            free(argv);
-            break;
-        }
-        else if (curr_arg_num == 2 && strcmp(argv[0], "cd") == 0) {
-            int err = chdir(argv[1]);
-            if (err == -1) {
-                printw("Can't go to this  directory: ");
-                printw(strerror(errno));
+        if (strcmp(argv[0], "exit") == 0) {
+            if (cur_arg_num > 1) {
+                printw("Too many arguments!");
                 refresh();
-                y = getcury(wnd) + 2;
+            }
+            else {
+                free(cur_str);
+                free(argv);
+                break;
             }
         }
+        else if (strcmp(argv[0], "cd") == 0) {
+            if (cur_arg_num != 2) {
+                printw("Wrong number of arguments!");
+                refresh();
+            }
+            else {
+                int err = chdir(argv[1]);
+                if (err == -1) {
+                    printw("Can't go to this  directory: ");
+                    printw(strerror(errno));
+                    refresh();
+                    y = getcury(wnd) + 1;
+                }
+            }
+        } 
         else { // разделение терминала на две программы
             int file_desc[2];
-            if(pipe(file_desc) == -1){
-                printw("Pipe failure\n");
+            if (pipe(file_desc) == -1) {
+                printw("Pipe failure\r");
                 refresh();
                 return 0;
             }
@@ -170,30 +248,30 @@ int main(){
                 wait(NULL);
                 char buf[BUFSIZ];
                 int len;
-                while ((len = read(file_desc[0], buf, BUFSIZ)) > 0)
+                while ((len = read(file_desc[0], buf, BUFSIZ)) > 0) {
                     printw("%*s", len, buf);
+                    refresh();
+                }
                 if (len < 0) {
                     printw("Reading problem!!!");
                     refresh();
                     return 0;
                 }
-                refresh();
                 int tmp_y = getcury(wnd);
                 if (tmp_y > y)
                     y = tmp_y;
                 else if (tmp_y == y)
                     ++y;
-                else {
+                else
                     printw("Could not find command!");
-                    y += 1;
-                }
                 }
             }
         }
         // очистка памяти
-        for (int i = 0; i < curr_arg_num; ++i) free(argv[i]);
         free(argv);
+        free(cur_str);
     }
+    close(bash_hist_desc);
     endwin();
     return 0;
 }
