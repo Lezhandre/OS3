@@ -21,10 +21,13 @@ int bash_hist_desc;
 
 // функция для считывания строки без пробелов и переносов
 // при этом перенос строки сохраняется
-int mygetstr(char * str, int * len, int n){
+int mygetstr(char * str, int * len){
     chtype c;
     bool change;
-    for (int i = *len - (D_STR + 1); i < *len; ++i) {
+    int i;
+    char cwd[PATH_MAX] = { 0 };
+    getcwd(cwd, PATH_MAX);
+    for (i = *len - (D_STR + 1); i < *len; ++i) {
         c = getch();
         switch (c)
         {
@@ -48,50 +51,63 @@ int mygetstr(char * str, int * len, int n){
             return -1;
         case KEY_UP:
             {
-            char cwd[PATH_MAX];
-            char minibuf[1];
-            ssize_t read_num, i = 0;
-            lseek(bash_hist_desc, SEEK_CUR, +1);
-            while (lseek(bash_hist_desc, SEEK_CUR, -2) >= 0) {
+            char minibuf[2];
+            ssize_t read_num, in = 0;
+            //lseek(bash_hist_desc, , SEEK_CUR);
+            while ((read_num = lseek(bash_hist_desc, -2, SEEK_CUR)) >= 0) {
                 read_num = read(bash_hist_desc, minibuf, 1);
-                ++i;
-                if (minibuf[0] != '\n') break;
+                if (minibuf[0] == '\n') break;
+                ++in;
             }
-            if (i > 0) { //if smth was actually read
-                if (winsdelln(stdscr, 0) == ERR) return -1;
-                str = (char *)realloc(str, i + 1);
-                pread(bash_hist_desc, str, i, SEEK_CUR);
-                *len = i;
-                printw("%s$ %s", getcwd(cwd, PATH_MAX), str);
+            if (read_num < 0)
+                lseek(bash_hist_desc, 0, SEEK_SET);
+            if (in > 0) { //if smth was actually read
+                if (wdeleteln(stdscr) == ERR) return -1;
+                str = (char *)realloc(str, in + 1);
+                pread(bash_hist_desc, str, in, lseek(bash_hist_desc, 0, SEEK_CUR));
+                *len = in;
+                str[in] = 0;
+                printw("\r%s", cwd);
+                refresh();
+                printw("$ %s", str);
+                refresh();
+                i = *len;
             }
+            else --i;
             }
-            i = *len;
             break;
         case KEY_DOWN:
             {
-            char minibuf[1];
-            size_t i = 0, read_num;
-            if (read_num = read(bash_hist_desc, minibuf, 1) && minibuf[0] != '\n') {
-                ++i;
-                while ((read_num = read(bash_hist_desc, minibuf, 1)) > 0 && minibuf[0] != '\n')
-                    ++i;
+            char minibuf[2];
+            size_t in = 0, read_num;
+            if (read(bash_hist_desc, minibuf, 1) > 0 && minibuf[0] != '\n') {
+                ++in;
+                while (read(bash_hist_desc, minibuf, 1) > 0 && minibuf[0] != '\n')
+                    ++in;
                 char cwd[PATH_MAX];
-                if (winsdelln(stdscr, 0) == ERR) return -1;
-                str = (char *)realloc(str, i + 1);
-                pread(bash_hist_desc, str, i, -i);
-                *len = i;
-                printw("%s$ %s", getcwd(cwd, PATH_MAX), str);
+                if (wdeleteln(stdscr) == ERR) return -1;
+                str = (char *)realloc(str, in + 1);
+                pread(bash_hist_desc, str, in, lseek(bash_hist_desc, -in - 1, SEEK_CUR));
+                lseek(bash_hist_desc, +in + 1, SEEK_CUR);
+                *len = in;
+                str[in] = 0;
+                printw("\r%s", cwd);
+                refresh();
+                printw("$ %s", str);
+                refresh();
+                refresh();
+                i = *len;
             }
+            else --i;
             }
-            i = *len;
             break;
         default:
             str[i] = c;
             break;
         }
     }
-    str[n] = 0;
-    return n + 1;
+    str[i] = 0;
+    return i + 1;
 }
 
 // проверка выделения памяти
@@ -117,7 +133,7 @@ int main(){
     keypad(wnd, true);  // нужно для включения особых клавиш (надо самостоятельно запрограммировать поведение)
     char cwd[PATH_MAX], minibuf[1], buf[BUFSIZ];
     int y = 0;
-    bash_hist_desc = open("~/.bash_history", O_RDWR | O_APPEND);
+    bash_hist_desc = open("./my_history", O_RDWR | O_CREAT | O_APPEND); // надо исправить адрес
     while (true) {
         buf[0] = 0;
         move(y, 0);
@@ -132,6 +148,11 @@ int main(){
         int len;
         char * cur_str;
         // цикл для получения с клавиатуры комманды/программы и её параметров
+        len = lseek(bash_hist_desc, -1, SEEK_END);
+        if (len == -1) {
+            printw(strerror(errno));
+            refresh();
+        }
         do {
             cur_str = NULL;
             len = 1;
@@ -140,7 +161,7 @@ int main(){
                 len += D_STR;
                 cur_str = (char *)realloc(cur_str, len);
                 check_mem((void *)cur_str);
-                if ((check = mygetstr(cur_str, &len, D_STR)) == -1) {
+                if ((check = mygetstr(cur_str, &len)) == -1) {
                     putp("Scan-error\n");
                     endwin();
                     return 0;
@@ -163,7 +184,7 @@ int main(){
             argv[i] = strtok(NULL, delim);
         }
         cur_arg_num = i;
-        lseek(bash_hist_desc, SEEK_SET, 0);
+        lseek(bash_hist_desc, 0, SEEK_SET);
         bool new = true, same = true;
         while (read(bash_hist_desc, minibuf, 1) > 0) {
             if (strcmp(minibuf, " ") == 0) {
@@ -185,7 +206,7 @@ int main(){
             }
         }
         if (new) {
-            lseek(bash_hist_desc, SEEK_END, 0);
+            lseek(bash_hist_desc, 0, SEEK_END);
             for (size_t i = 0; argv[i]; ++i) {
                 write(bash_hist_desc, argv[i], strlen(argv[i]));
                 write(bash_hist_desc, " ", 1);
