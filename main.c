@@ -95,7 +95,6 @@ int mygetstr(char * str, int * len){
                 refresh();
                 printw("$ %s", str);
                 refresh();
-                refresh();
                 i = *len;
             }
             else --i;
@@ -133,12 +132,13 @@ int main(){
     keypad(wnd, true);  // нужно для включения особых клавиш (надо самостоятельно запрограммировать поведение)
     char cwd[PATH_MAX], minibuf[1], buf[BUFSIZ];
     int y = 0;
+    getcwd(cwd, PATH_MAX);
     bash_hist_desc = open("./my_history", O_RDWR | O_CREAT | O_APPEND); // надо исправить адрес
     while (true) {
         buf[0] = 0;
         move(y, 0);
         attrset(A_BOLD);
-        printw(getcwd(cwd, PATH_MAX));
+        printw("%s", cwd);
         printw("$ ");
         attroff(A_BOLD);
         ++y;
@@ -149,10 +149,8 @@ int main(){
         char * cur_str;
         // цикл для получения с клавиатуры комманды/программы и её параметров
         len = lseek(bash_hist_desc, -1, SEEK_END);
-        if (len == -1) {
-            printw(strerror(errno));
-            refresh();
-        }
+        if (len == -1)
+            lseek(bash_hist_desc, 0, SEEK_END);
         do {
             cur_str = NULL;
             len = 1;
@@ -235,11 +233,14 @@ int main(){
             }
             else {
                 int err = chdir(argv[1]);
+                getcwd(cwd, PATH_MAX);
                 if (err == -1) {
-                    printw("Can't go to this  directory: ");
+                    printw("Can't go to this directory: ");
                     printw(strerror(errno));
                     refresh();
                     y = getcury(wnd) + 1;
+                } else {
+                    y = getcury(wnd);
                 }
             }
         } 
