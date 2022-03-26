@@ -1,2 +1,0 @@
-/bin/ar qc libLibsModule.a  CMakeFiles/LibsModule.dir/main.c.o
-/bin/ranlib libLibsModule.a

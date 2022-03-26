@@ -1,4 +1,0 @@
-/home/bubunter/Desktop/DEV/OS3/build/CMakeFiles/rebuild_cache.dir
-/home/bubunter/Desktop/DEV/OS3/build/CMakeFiles/edit_cache.dir
-/home/bubunter/Desktop/DEV/OS3/build/CMakeFiles/main.dir
-/home/bubunter/Desktop/DEV/OS3/build/CMakeFiles/LibsModule.dir
