@@ -29,7 +29,7 @@ void check_mem(void * ptr){
 }
 
 void signal_child(int sig){
-    int err = kill(id, sig); // посылание какого-то сигнала в дочерний процесс
+    int err = kill(id, sig); // посылание какого-то сигнала в дочерний процессg
     (void) signal(SIGINT, SIG_IGN);
 }
 
@@ -76,36 +76,6 @@ int main(){
         }
         cur_arg_num = i;
         if(!argv[0]) continue;
-        else if(strcmp(argv[0], "\033[A") == 0){
-            char minibuf[1];
-            ssize_t read_num, in = 0;
-            while ((read_num = lseek(bash_hist_desc, -2, SEEK_CUR)) >= 0) {
-                read_num = read(bash_hist_desc, minibuf, 1);
-                if (minibuf[0] == '\n') break;
-                ++in;
-            }
-            if (read_num < 0)
-                lseek(bash_hist_desc, 0, SEEK_SET);
-            if (in > 0) { // если что-то прочиталось
-                pread(bash_hist_desc, cur_str, in, lseek(bash_hist_desc, 0, SEEK_CUR));
-                cur_str[in] = 0;
-                printf("\r%s$ %s\n", cwd, cur_str);
-            }
-        }
-        else if(strcmp(argv[0], "\033[B") == 0){
-            char minibuf[1];
-            size_t in = 0, read_num;
-            if (read(bash_hist_desc, minibuf, 1) > 0 && minibuf[0] != '\n') {
-                ++in;
-                while (read(bash_hist_desc, minibuf, 1) > 0 && minibuf[0] != '\n') ++in;
-                if (wdeleteln(stdscr) == ERR) return -1;
-                refresh();
-                pread(bash_hist_desc, cur_str, in, lseek(bash_hist_desc, 0, SEEK_CUR) - in - 1);
-                cur_str[in] = 0;
-                printf("\r%s$ %s\n", cwd, cur_str);
-                i = in;
-            }
-        }
         else if (strcmp(argv[0], "exit") == 0) {
             if (cur_arg_num > 1) {
                 printf("Too many arguments!\n");
@@ -174,6 +144,5 @@ int main(){
         //free(cur_str);
     }
     close(bash_hist_desc);
-    tcsetattr( STDIN_FILENO, TCSANOW, &oldt );
     return 0;
 }
