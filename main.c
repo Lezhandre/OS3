@@ -4,14 +4,12 @@
 #include <errno.h>
 
 #include <linux/limits.h>
-#include <ncurses.h>
 #include <unistd.h>
 #include <malloc.h>
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <termios.h>
 
 #define D_STR 80    // изменение выделения памяти под строку
 #define D_ARG 5     // изменение выделения памяти под указатели
@@ -23,13 +21,13 @@ int bash_hist_desc;
 void check_mem(void * ptr){
     if (ptr == NULL) {
         perror("Memory problem");
-        endwin();
         exit(0);
     }
 }
 
 void signal_child(int sig){
-    int err = kill(id, sig); // посылание какого-то сигнала в дочерний процессg
+    printf("\n");
+    kill(id, sig); // посылание какого-то сигнала в дочерний процесс
     (void) signal(SIGINT, SIG_IGN);
 }
 
@@ -40,7 +38,6 @@ int main(){
     bash_hist_desc = open("./my_history", O_RDWR | O_CREAT | O_APPEND); // надо исправить адрес
     if(bash_hist_desc < 0) {
         printf("Could not open history file\n");
-        //return -1;
     }
     while (true) {
         printf("%s$ ", cwd);
@@ -59,12 +56,6 @@ int main(){
         cur_arg_num = D_ARG;
         len = strlen(cur_str);
         argv[i] = strtok(cur_str, delim);
-        struct termios oldt, newt;
-        int ch;
-        tcgetattr( STDIN_FILENO, &oldt );
-        newt = oldt;
-        newt.c_lflag &= ~( ICANON | ECHO );
-        tcsetattr( STDIN_FILENO, TCSANOW, &newt );
         while (argv[i] != NULL) {
             ++i;
             if (i == cur_arg_num) {
@@ -81,7 +72,6 @@ int main(){
                 printf("Too many arguments!\n");
             }
             else {
-                //free(cur_str);
                 free(argv);
                 break;
             }
@@ -111,37 +101,16 @@ int main(){
                 { // field of view (like pov)
                 signal(SIGINT, signal_child);
                 char buf[BUFSIZ] = {0};
-                int lenin;
                 int st;
                 wait(&st);
                 if (!WIFEXITED(st)){
-                    // добавление в историю
-                    if (lseek(bash_hist_desc, -2, SEEK_END) < 0)
-                        lseek(bash_hist_desc, 0, SEEK_END);
-                    bool new = true;
-                    for (size_t i = 0; read(bash_hist_desc, minibuf, 1) > 0 && *minibuf != '\n'; ++i) {
-                        lseek(bash_hist_desc, -2, SEEK_CUR);
-                        if (len < 1 + i || *minibuf != cur_str[len - 1 - i] && !(!cur_str[len - 1 - i] && *minibuf == ' ')) {
-                            new = false;
-                            break;
-                        }
-                    }
-                    if (new) {
-                        lseek(bash_hist_desc, 0, SEEK_END);
-                        for (size_t i = 0; argv[i]; ++i) {
-                            write(bash_hist_desc, argv[i], strlen(argv[i]));
-                            if (i + 1 < cur_arg_num) write(bash_hist_desc, " ", 1);
-                        }
-                        write(bash_hist_desc, "\n", 1);
-                    }
                 }
-                else printf("%s\n", strerror(WEXITSTATUS(st)));
+                else if (strcmp(strerror(WEXITSTATUS(st)), "Success")) printf("%s\n", strerror(WEXITSTATUS(st)));
                 }
             }
         }
         // очистка памяти
         free(argv);
-        //free(cur_str);
     }
     close(bash_hist_desc);
     return 0;
